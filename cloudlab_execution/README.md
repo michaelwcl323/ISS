@@ -7,6 +7,17 @@ This directory provides the same direct CloudLab workflow used by Ladon:
 - configuration is generated from ISS's existing deployment scripts;
 - peer output is collected and analyzed locally.
 
+For experimental parity with Ladon, direct CloudLab runs override `UseTLS` to
+`false` in generated run-specific configuration. ISS's default template is not
+modified, and client request signing remains controlled independently by
+`authentication` in `run_experiment.py`. Legacy `tc eth0` bandwidth commands
+are also replaced with no-ops because CloudLab interface names vary by profile.
+
+The controller generates the client request-signing key pair once. Its public
+key is then installed on every peer after that peer generates its own local
+TLS/authentication certificate. This preserves ISS's real request signature
+verification while allowing peer TLS identities to remain node-specific.
+
 ## Configuration
 
 Copy `cloudlab_settings.example.json` to `cloudlab_settings.json`, then set:

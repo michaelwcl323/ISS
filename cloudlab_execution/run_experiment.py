@@ -153,7 +153,7 @@ def remote(*, dry_run: bool = False, install: bool = False) -> None:
         clients=10,                 # Client processes on 10.10.1.11
         duration=60,
         throughput=60000,
-        orderer="Pbft",
+        orderer="HotStuff",
         batch_size=4096,
         segment_length=16,
         view_change_timeout=60000,
@@ -538,9 +538,34 @@ def patch_master_commands(
             if not match:
                 raise RuntimeError(f"Cannot patch log command: {line}")
             output.append(f"exec-start {match.group(1)} /dev/null true")
+        elif re.match(r"exec-start\s+\S+\s+\S+\s+tc\s+qdisc\s+", line):
+            match = re.match(r"exec-start\s+(\S+)\s+(\S+)", line)
+            if not match:
+                raise RuntimeError(f"Cannot patch bandwidth command: {line}")
+            output.append(f"exec-start {match.group(1)} {match.group(2)} true")
         else:
             output.append(line)
     return "\n".join(output) + "\n"
+
+
+def disable_direct_remote_tls(run_directory: Path) -> None:
+    """Match Ladon's direct CloudLab mode without changing ISS defaults."""
+
+    config_files = sorted((run_directory / "config").glob("config-*.yml"))
+    if not config_files:
+        raise RuntimeError("The generator did not produce any ISS config files")
+
+    for config_file in config_files:
+        contents = config_file.read_text()
+        updated, count = re.subn(
+            r"(?m)^UseTLS:\s+\S+",
+            "UseTLS:               false",
+            contents,
+            count=1,
+        )
+        if count != 1:
+            raise RuntimeError(f"Missing UseTLS setting in {config_file}")
+        config_file.write_text(updated)
 
 
 def prepare_direct_remote_files(
@@ -562,6 +587,7 @@ def prepare_direct_remote_files(
         cwd=deployment_directory,
         check=True,
     )
+    disable_direct_remote_tls(run_directory)
     subprocess.run(
         [
             "python3",
@@ -599,11 +625,19 @@ def prepare_peer_command(
     remote_source: str,
     remote_run: str,
     config_data: str,
+    client_public_key: bytes,
     host: CloudLabHost,
 ) -> str:
     encoded_config = base64.b64encode(config_data.encode()).decode()
+    encoded_client_public_key = base64.b64encode(client_public_key).decode()
+    peer_binary = f"{remote_home}/iss-gopath/bin/orderingpeer"
+    peer_pattern = f"^{re.escape(peer_binary)}( |$)"
     return " && ".join(
         [
+            (
+                f"pkill -TERM -f {shlex.quote(peer_pattern)} "
+                "2>/dev/null || true"
+            ),
             f"rm -rf {shlex.quote(remote_run)}",
             f"mkdir -p {shlex.quote(remote_run + '/config')}",
             (
@@ -617,6 +651,10 @@ def prepare_peer_command(
             f"cd {shlex.quote(remote_run + '/tls-data')}",
             f"./generate.sh -f {shlex.quote(host.hostname)} "
             f"{shlex.quote(host.private_hostname)}",
+            (
+                f"printf %s {shlex.quote(encoded_client_public_key)} | "
+                "base64 -d > client-ecdsa-256.pem"
+            ),
         ]
     )
 
@@ -639,6 +677,24 @@ def direct_slave_command(
         f"{shlex.quote(host.hostname)} {shlex.quote(host.private_hostname)}"
     )
     return f"bash -lc {shlex.quote(inner)}"
+
+
+def remote_cleanup_command(remote_home: str, remote_run: str) -> str:
+    peer_binary = f"{remote_home}/iss-gopath/bin/orderingpeer"
+    peer_pattern = f"^{re.escape(peer_binary)}( |$)"
+    return "; ".join(
+        [
+            (
+                f"pkill -TERM -f {shlex.quote(peer_pattern)} "
+                "2>/dev/null || true"
+            ),
+            (
+                f"test -f {shlex.quote(remote_run + '/control.pid')} && "
+                f"kill $(cat {shlex.quote(remote_run + '/control.pid')}) "
+                "2>/dev/null || true"
+            ),
+        ]
+    )
 
 
 def collect_peer_results(
@@ -751,6 +807,10 @@ def run_direct_remote_experiment(
         cwd=run_directory / "tls-data",
         check=True,
     )
+    client_public_key_file = (
+        run_directory / "tls-data/client-ecdsa-256.pem"
+    )
+    client_public_key = client_public_key_file.read_bytes()
 
     remote_source = remote_source_directory(settings, remote_home)
     run_name = run_directory.name
@@ -771,6 +831,7 @@ def run_direct_remote_experiment(
                         remote_source=remote_source,
                         remote_run=remote_run,
                         config_data=config_data,
+                        client_public_key=client_public_key,
                         host=host,
                     ),
                 ),
@@ -855,13 +916,12 @@ def run_direct_remote_experiment(
             if process.poll() is None:
                 process.terminate()
             log.close()
-            cleanup = (
-                f"test -f {shlex.quote(remote_run + '/control.pid')} && "
-                f"kill $(cat {shlex.quote(remote_run + '/control.pid')}) "
-                "2>/dev/null || true"
-            )
             subprocess.run(
-                ssh_command(key_path, host, cleanup),
+                ssh_command(
+                    key_path,
+                    host,
+                    remote_cleanup_command(remote_home, remote_run),
+                ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
