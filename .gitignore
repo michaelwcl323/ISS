@@ -5,3 +5,7 @@
 *.coverprofile
 *.tmp
 .idea
+
+# CloudLab runtime configuration and generated Python bytecode
+cloudlab_execution/cloudlab_settings.json
+cloudlab_execution/__pycache__/
