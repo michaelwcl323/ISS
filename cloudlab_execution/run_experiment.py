@@ -136,7 +136,7 @@ def local(*, dry_run: bool = False) -> None:
         actual_generated_path.unlink(missing_ok=True)
 
 
-def remote(*, dry_run: bool = False, install: bool = False) -> None:
+def remote(*, dry_run: bool = False, install: bool = False) -> Path | None:
     """Run an experiment on hosts from cloudlab_settings.json."""
 
     # ================================================================
@@ -161,6 +161,25 @@ def remote(*, dry_run: bool = False, install: bool = False) -> None:
         authentication=True,
     )
     # ================================================================
+
+    return run_remote_config(
+        config=config,
+        controller_hostname=controller_hostname,
+        controller_private_hostname=controller_private_hostname,
+        dry_run=dry_run,
+        install=install,
+    )
+
+
+def run_remote_config(
+    *,
+    config: LocalConfig,
+    controller_hostname: str,
+    controller_private_hostname: str,
+    dry_run: bool = False,
+    install: bool = False,
+) -> Path | None:
+    """Run one caller-provided CloudLab experiment configuration."""
 
     validate_local_config(config)
     settings = load_cloudlab_settings()
@@ -209,7 +228,7 @@ def remote(*, dry_run: bool = False, install: bool = False) -> None:
     print_remote_summary(config, key_path, master, peers, client)
     if dry_run:
         print("\nDry run: SSH was checked, but the experiment was not started.")
-        return
+        return None
 
     result_directory = run_direct_remote_experiment(
         repository=repository,
@@ -223,6 +242,7 @@ def remote(*, dry_run: bool = False, install: bool = False) -> None:
         remote_home=remote_home,
     )
     print_result_summary(result_directory)
+    return result_directory
 
 
 def load_cloudlab_settings() -> dict:
@@ -1141,81 +1161,102 @@ def display_value(
     return f"{value} {unit}".rstrip()
 
 
-def print_result_summary(result_directory: Path) -> None:
+def format_result_summary_row(
+    row: dict[str, str],
+    *,
+    parameters: list[tuple[str, str]] | None = None,
+) -> str:
+    """Format one result-summary.csv row as the human-readable table."""
+
+    target_raw = row.get("target-throughput", "")
+    actual_raw = row.get("throughput-raw", "")
+    achievement = "N/A"
+    try:
+        target = float(target_raw)
+        actual = float(actual_raw)
+        if target:
+            achievement = f"{actual / target * 100:.1f}%"
+    except (TypeError, ValueError):
+        pass
+
+    truncated_available = (
+        row.get("nreq-trunc", "").strip() not in {"", "0", "None"}
+    )
+    result_metrics = [
+        ("Experiment", row.get("exp", "N/A")),
+        ("Topology", f"{row.get('peers', '?')} peers, "
+                     f"{row.get('clients', '?')} client machine(s)"),
+        ("Protocol", f"{row.get('orderer', 'N/A')} / "
+                     f"{row.get('leader-policy', 'N/A')} leaders"),
+        ("Duration", display_value(row, "duration-raw", unit="s")),
+        ("Target throughput", display_value(
+            row, "target-throughput", unit="req/s", decimals=0
+        )),
+        ("Actual throughput", display_value(
+            row, "throughput-raw", unit="req/s"
+        )),
+        ("Target achieved", achievement),
+        ("Average latency", display_value(
+            row, "latency-avg-raw", unit="ms"
+        )),
+        ("P95 latency", display_value(
+            row, "latency-95pctile-raw", unit="ms"
+        )),
+        ("Latency stddev", display_value(
+            row, "latency-stdev-raw", unit="ms"
+        )),
+        ("Sampled requests", display_value(
+            row, "nreq-raw", decimals=0
+        )),
+        ("Proposal rate", display_value(
+            row, "propose-rate-raw", unit="batch/s"
+        )),
+        ("Epochs min/avg/max",
+         f"{display_value(row, 'epochs-min')} / "
+         f"{display_value(row, 'epochs-avg')} / "
+         f"{display_value(row, 'epochs-max')}"),
+        ("View changes", display_value(
+            row, "viewchanges-total", decimals=0
+        )),
+        ("Stable-window data", "available" if truncated_available else "N/A"),
+    ]
+    metrics = [*(parameters or []), *result_metrics]
+
+    label_width = max(len(label) for label, _ in metrics)
+    value_width = max(len(value) for _, value in metrics)
+    border = f"+-{'-' * label_width}-+-{'-' * value_width}-+"
+    lines = ["Experiment result", border]
+    lines.extend(
+        f"| {label:<{label_width}} | {value:<{value_width}} |"
+        for label, value in metrics
+    )
+    lines.append(border)
+    return "\n".join(lines)
+
+
+def load_result_summary(result_directory: Path) -> list[dict[str, str]]:
+    """Load the CSV rows used by terminal and matrix text summaries."""
+
     summary_file = result_directory / "result-summary.csv"
     if not summary_file.is_file():
-        print(f"\nResult summary was not found: {summary_file}")
-        return
-
+        raise FileNotFoundError(f"Result summary was not found: {summary_file}")
     with summary_file.open(newline="") as source:
         rows = list(csv.DictReader(source))
     if not rows:
-        print(f"\nResult summary contains no experiment rows: {summary_file}")
+        raise RuntimeError(f"Result summary contains no rows: {summary_file}")
+    return rows
+
+
+def print_result_summary(result_directory: Path) -> None:
+    summary_file = result_directory / "result-summary.csv"
+    try:
+        rows = load_result_summary(result_directory)
+    except (FileNotFoundError, RuntimeError) as error:
+        print(f"\n{error}")
         return
 
     for row in rows:
-        target_raw = row.get("target-throughput", "")
-        actual_raw = row.get("throughput-raw", "")
-        achievement = "N/A"
-        try:
-            target = float(target_raw)
-            actual = float(actual_raw)
-            if target:
-                achievement = f"{actual / target * 100:.1f}%"
-        except (TypeError, ValueError):
-            pass
-
-        truncated_available = (
-            row.get("nreq-trunc", "").strip() not in {"", "0", "None"}
-        )
-        metrics = [
-            ("Experiment", row.get("exp", "N/A")),
-            ("Topology", f"{row.get('peers', '?')} peers, "
-                         f"{row.get('clients', '?')} client machine(s)"),
-            ("Protocol", f"{row.get('orderer', 'N/A')} / "
-                         f"{row.get('leader-policy', 'N/A')} leaders"),
-            ("Duration", display_value(row, "duration-raw", unit="s")),
-            ("Target throughput", display_value(
-                row, "target-throughput", unit="req/s", decimals=0
-            )),
-            ("Actual throughput", display_value(
-                row, "throughput-raw", unit="req/s"
-            )),
-            ("Target achieved", achievement),
-            ("Average latency", display_value(
-                row, "latency-avg-raw", unit="ms"
-            )),
-            ("P95 latency", display_value(
-                row, "latency-95pctile-raw", unit="ms"
-            )),
-            ("Latency stddev", display_value(
-                row, "latency-stdev-raw", unit="ms"
-            )),
-            ("Sampled requests", display_value(
-                row, "nreq-raw", decimals=0
-            )),
-            ("Proposal rate", display_value(
-                row, "propose-rate-raw", unit="batch/s"
-            )),
-            ("Epochs min/avg/max",
-             f"{display_value(row, 'epochs-min')} / "
-             f"{display_value(row, 'epochs-avg')} / "
-             f"{display_value(row, 'epochs-max')}"),
-            ("View changes", display_value(
-                row, "viewchanges-total", decimals=0
-            )),
-            ("Stable-window data", "available" if truncated_available else "N/A"),
-        ]
-
-        label_width = max(len(label) for label, _ in metrics)
-        value_width = max(len(value) for _, value in metrics)
-        border = f"+-{'-' * label_width}-+-{'-' * value_width}-+"
-
-        print("\nExperiment result")
-        print(border)
-        for label, value in metrics:
-            print(f"| {label:<{label_width}} | {value:<{value_width}} |")
-        print(border)
+        print(f"\n{format_result_summary_row(row)}")
 
     print(f"\nFull CSV: {summary_file}")
     if any(
