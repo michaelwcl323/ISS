@@ -43,6 +43,8 @@ FAILURES = 0
 CLIENTS = 10
 DURATION = 60
 BATCH_SIZE = 4096
+PAYLOAD_SIZE = 500           # Transaction size, bytes
+BATCH_DELAY = 1000           # Batch delay, milliseconds
 SEGMENT_LENGTH = 16
 VIEW_CHANGE_TIMEOUT = 60000
 LEADER_POLICY = "Simple"
@@ -107,6 +109,8 @@ def experiment_config(input_rate: int, orderer: str) -> runner.LocalConfig:
         throughput=input_rate,
         orderer=orderer,
         batch_size=BATCH_SIZE,
+        payload_size=PAYLOAD_SIZE,
+        batch_delay=BATCH_DELAY,
         segment_length=SEGMENT_LENGTH,
         view_change_timeout=VIEW_CHANGE_TIMEOUT,
         leader_policy=LEADER_POLICY,
@@ -162,6 +166,8 @@ def write_result_file(
         ("Input rate", f"{config.throughput} req/s"),
         ("Orderer", config.orderer),
         ("Batch size", f"{config.batch_size} requests"),
+        ("Transaction size", f"{config.payload_size} bytes"),
+        ("Batch delay", f"{config.batch_delay} ms"),
         ("Segment length", f"{config.segment_length} entries"),
         ("View-change timeout", f"{config.view_change_timeout} ms"),
         ("Leader policy", config.leader_policy),
