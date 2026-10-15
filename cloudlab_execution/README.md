@@ -67,3 +67,8 @@ python3 cloudlab_execution/run_experiment.py --local
 
 Remote results are written under
 `deployment/deployment-data/direct-remote-NNNN/`.
+
+## Consensus latency
+
+PBFT/HotStuff matrix reports now use proposal → proposer-local commit latency.
+See [CONSENSUS_LATENCY.md](CONSENSUS_LATENCY.md) for timing, sampling and rebuild requirements.

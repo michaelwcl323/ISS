@@ -308,6 +308,7 @@ func (pi *pbftInstance) proposeSN(preprepare *pb.PbftPreprepare, sn int32) {
 		},
 	}
 
+	log.RecordProposal(sn, digest, len(batch.Requests))
 	tracing.MainTrace.Event(tracing.PROPOSE, int64(sn), int64(len(batch.Requests)))
 
 	// Enqueue the message for all followers

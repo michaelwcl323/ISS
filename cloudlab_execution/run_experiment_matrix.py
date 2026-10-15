@@ -44,7 +44,7 @@ CLIENTS = 10
 DURATION = 60
 BATCH_SIZE = 4096
 PAYLOAD_SIZE = 500           # Transaction size, bytes
-BATCH_DELAY = 1000           # Batch delay, milliseconds
+BATCH_DELAY = 200            # Batch delay, milliseconds (pinned min=max)
 SEGMENT_LENGTH = 16
 VIEW_CHANGE_TIMEOUT = 60000
 LEADER_POLICY = "Simple"
@@ -273,8 +273,7 @@ def main() -> int:
             (
                 csv_file,
                 markdown_file,
-                response_plot_file,
-                scheduled_plot_file,
+                consensus_plot_file,
             ) = summarizer.generate_reports(
                 result_root=RESULT_ROOT,
                 minimum_input_rate=20000,
@@ -283,8 +282,7 @@ def main() -> int:
             print("\nAggregate tables and plots:")
             print(f"  CSV:                {csv_file}")
             print(f"  Markdown:           {markdown_file}")
-            print(f"  Response latency:   {response_plot_file}")
-            print(f"  Scheduled latency:  {scheduled_plot_file}")
+            print(f"  Consensus latency:  {consensus_plot_file}")
         except (FileNotFoundError, RuntimeError, ValueError) as error:
             print(
                 f"\n[iss-matrix] WARNING: aggregate reports were not "
