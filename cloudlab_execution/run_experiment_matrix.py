@@ -41,7 +41,7 @@ CONTROLLER_PRIVATE_HOSTNAME = "10.10.1.11"
 PEERS = 10
 FAILURES = 0
 CLIENTS = 10
-DURATION = 60
+DURATION = 120
 BATCH_SIZE = 4096
 PAYLOAD_SIZE = 500           # Transaction size, bytes
 BATCH_DELAY = 200            # Batch delay, milliseconds (pinned min=max)
